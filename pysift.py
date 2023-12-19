@@ -151,7 +151,8 @@ def isPixelAnExtremum(first_subimage, second_subimage, third_subimage, threshold
                    center_pixel_value <= second_subimage[1, 2]
     return False
 
-def localizeExtremumViaQuadraticFit(i, j, image_index, octave_index, num_intervals, dog_images_in_octave, sigma, contrast_threshold, image_border_width, eigenvalue_ratio=10, num_attempts_until_convergence=5):
+def localizeExtremumViaQuadraticFit(i, j, image_index, octave_index, num_intervals, dog_images_in_octave, sigma, \
+                                    contrast_threshold, image_border_width, eigenvalue_ratio=10, num_attempts_until_convergence=5):
     """Iteratively refine pixel positions of scale-space extrema via quadratic fit around each extremum's neighbors
     """
     # 通过拟合在上一步找到的特征点的基础上进一步找到亚像素位置
@@ -166,7 +167,7 @@ def localizeExtremumViaQuadraticFit(i, j, image_index, octave_index, num_interva
                             third_image[i-1:i+2, j-1:j+2]]).astype('float32') / 255.
         gradient = computeGradientAtCenterPixel(pixel_cube)
         hessian = computeHessianAtCenterPixel(pixel_cube)
-        extremum_update = -lstsq(hessian, gradient, rcond=None)[0]
+        extremum_update = -lstsq(hessian, gradient, rcond=None)[0]  # 拟合
         if abs(extremum_update[0]) < 0.5 and abs(extremum_update[1]) < 0.5 and abs(extremum_update[2]) < 0.5:
             break
         j += int(round(extremum_update[0]))
@@ -189,7 +190,7 @@ def localizeExtremumViaQuadraticFit(i, j, image_index, octave_index, num_interva
         xy_hessian_det = det(xy_hessian)
         if xy_hessian_det > 0 and eigenvalue_ratio * (xy_hessian_trace ** 2) < ((eigenvalue_ratio + 1) ** 2) * xy_hessian_det:
             # Contrast check passed -- construct and return OpenCV KeyPoint object
-            keypoint = KeyPoint()
+            keypoint = KeyPoint()  # 返回cv格式的特征点
             keypoint.pt = ((j + extremum_update[0]) * (2 ** octave_index), (i + extremum_update[1]) * (2 ** octave_index))
             keypoint.octave = octave_index + image_index * (2 ** 8) + int(round((extremum_update[2] + 0.5) * 255)) * (2 ** 16)
             keypoint.size = sigma * (2 ** ((image_index + extremum_update[2]) / float32(num_intervals))) * (2 ** (octave_index + 1))  # octave_index + 1 because the input image was doubled
@@ -203,13 +204,14 @@ def computeGradientAtCenterPixel(pixel_array):
     # With step size h, the central difference formula of order O(h^2) for f'(x) is (f(x + h) - f(x - h)) / (2 * h)
     # Here h = 1, so the formula simplifies to f'(x) = (f(x + 1) - f(x - 1)) / 2
     # NOTE: x corresponds to second array axis, y corresponds to first array axis, and s (scale) corresponds to third array axis
-    dx = 0.5 * (pixel_array[1, 1, 2] - pixel_array[1, 1, 0])
-    dy = 0.5 * (pixel_array[1, 2, 1] - pixel_array[1, 0, 1])
-    ds = 0.5 * (pixel_array[2, 1, 1] - pixel_array[0, 1, 1])
+    dx = 0.5 * (pixel_array[1, 1, 2] - pixel_array[1, 1, 0])  # x方向梯度
+    dy = 0.5 * (pixel_array[1, 2, 1] - pixel_array[1, 0, 1])  # y方向梯度
+    ds = 0.5 * (pixel_array[2, 1, 1] - pixel_array[0, 1, 1])  # s(尺度)方向梯度
     return array([dx, dy, ds])
 
 def computeHessianAtCenterPixel(pixel_array):
     """Approximate Hessian at center pixel [1, 1, 1] of 3x3x3 array using central difference formula of order O(h^2), where h is the step size
+    计算海森矩阵
     """
     # With step size h, the central difference formula of order O(h^2) for f''(x) is (f(x + h) - 2 * f(x) + f(x - h)) / (h ^ 2)
     # Here h = 1, so the formula simplifies to f''(x) = f(x + 1) - 2 * f(x) + f(x - 1)
@@ -234,14 +236,14 @@ def computeHessianAtCenterPixel(pixel_array):
 def computeKeypointsWithOrientations(keypoint, octave_index, gaussian_image, radius_factor=3, num_bins=36, peak_ratio=0.8, scale_factor=1.5):
     """Compute orientations for each keypoint
     """
-    logger.debug('Computing keypoint orientations...')
+    print('Computing keypoint orientations...')
     keypoints_with_orientations = []
     image_shape = gaussian_image.shape
 
     scale = scale_factor * keypoint.size / float32(2 ** (octave_index + 1))  # compare with keypoint.size computation in localizeExtremumViaQuadraticFit()
-    radius = int(round(radius_factor * scale))
-    weight_factor = -0.5 / (scale ** 2)
-    raw_histogram = zeros(num_bins)
+    radius = int(round(radius_factor * scale))  # 特征点邻域半径
+    weight_factor = -0.5 / (scale ** 2)  # 高斯核权重系数
+    raw_histogram = zeros(num_bins)  # 梯度方向每10度分成一个bin
     smooth_histogram = zeros(num_bins)
 
     for i in range(-radius, radius + 1):
@@ -250,21 +252,21 @@ def computeKeypointsWithOrientations(keypoint, octave_index, gaussian_image, rad
             for j in range(-radius, radius + 1):
                 region_x = int(round(keypoint.pt[0] / float32(2 ** octave_index))) + j
                 if region_x > 0 and region_x < image_shape[1] - 1:
-                    dx = gaussian_image[region_y, region_x + 1] - gaussian_image[region_y, region_x - 1]
-                    dy = gaussian_image[region_y - 1, region_x] - gaussian_image[region_y + 1, region_x]
-                    gradient_magnitude = sqrt(dx * dx + dy * dy)
-                    gradient_orientation = rad2deg(arctan2(dy, dx))
-                    weight = exp(weight_factor * (i ** 2 + j ** 2))  # constant in front of exponential can be dropped because we will find peaks later
-                    histogram_index = int(round(gradient_orientation * num_bins / 360.))
-                    raw_histogram[histogram_index % num_bins] += weight * gradient_magnitude
+                    dx = gaussian_image[region_y, region_x + 1] - gaussian_image[region_y, region_x - 1]  # 在高斯图像上计算特性点邻域周围点的梯度 x方向
+                    dy = gaussian_image[region_y - 1, region_x] - gaussian_image[region_y + 1, region_x]  # y方向
+                    gradient_magnitude = sqrt(dx * dx + dy * dy)  # 梯度
+                    gradient_orientation = rad2deg(arctan2(dy, dx))  # 梯度方向
+                    weight = exp(weight_factor * (i ** 2 + j ** 2))  # 权重 距离特征点近的梯度对特征点的梯度贡献大，离特征点远的点对梯度贡献小 constant in front of exponential can be dropped because we will find peaks later
+                    histogram_index = int(round(gradient_orientation * num_bins / 360.))  # 梯度角度所在的bin的索引
+                    raw_histogram[histogram_index % num_bins] += weight * gradient_magnitude  # 取整，循环
 
     for n in range(num_bins):
-        smooth_histogram[n] = (6 * raw_histogram[n] + 4 * (raw_histogram[n - 1] + raw_histogram[(n + 1) % num_bins]) + raw_histogram[n - 2] + raw_histogram[(n + 2) % num_bins]) / 16.
-    orientation_max = max(smooth_histogram)
+        smooth_histogram[n] = (6 * raw_histogram[n] + 4 * (raw_histogram[n - 1] + raw_histogram[(n + 1) % num_bins]) + raw_histogram[n - 2] + raw_histogram[(n + 2) % num_bins]) / 16.  # 直方图平滑
+    orientation_max = max(smooth_histogram)  # 最大朝向 累加值
     orientation_peaks = where(logical_and(smooth_histogram > roll(smooth_histogram, 1), smooth_histogram > roll(smooth_histogram, -1)))[0]
     for peak_index in orientation_peaks:
-        peak_value = smooth_histogram[peak_index]
-        if peak_value >= peak_ratio * orientation_max:
+        peak_value = smooth_histogram[peak_index]  # 主方向
+        if peak_value >= peak_ratio * orientation_max:  # 辅方向
             # Quadratic peak interpolation
             # The interpolation update is given by equation (6.30) in https://ccrma.stanford.edu/~jos/sasp/Quadratic_Interpolation_Spectral_Peaks.html
             left_value = smooth_histogram[(peak_index - 1) % num_bins]
@@ -304,16 +306,16 @@ def removeDuplicateKeypoints(keypoints):
     if len(keypoints) < 2:
         return keypoints
 
-    keypoints.sort(key=cmp_to_key(compareKeypoints))
+    keypoints.sort(key=cmp_to_key(compareKeypoints))  # 从小到大排序
     unique_keypoints = [keypoints[0]]
 
     for next_keypoint in keypoints[1:]:
-        last_unique_keypoint = unique_keypoints[-1]
+        last_unique_keypoint = unique_keypoints[-1]  # 取最后一个
         if last_unique_keypoint.pt[0] != next_keypoint.pt[0] or \
            last_unique_keypoint.pt[1] != next_keypoint.pt[1] or \
            last_unique_keypoint.size != next_keypoint.size or \
            last_unique_keypoint.angle != next_keypoint.angle:
-            unique_keypoints.append(next_keypoint)
+            unique_keypoints.append(next_keypoint)  # 追加到最后一个
     return unique_keypoints
 
 #############################
@@ -325,7 +327,7 @@ def convertKeypointsToInputImageSize(keypoints):
     """
     converted_keypoints = []
     for keypoint in keypoints:
-        keypoint.pt = tuple(0.5 * array(keypoint.pt))
+        keypoint.pt = tuple(0.5 * array(keypoint.pt))  # 做金字塔的图像比原始图像扩大了两倍
         keypoint.size *= 0.5
         keypoint.octave = (keypoint.octave & ~255) | ((keypoint.octave - 1) & 255)
         converted_keypoints.append(keypoint)
@@ -348,7 +350,7 @@ def unpackOctave(keypoint):
 def generateDescriptors(keypoints, gaussian_images, window_width=4, num_bins=8, scale_multiplier=3, descriptor_max_value=0.2):
     """Generate descriptors for each keypoint
     """
-    logger.debug('Generating descriptors...')
+    print('Generating descriptors...')
     descriptors = []
 
     for keypoint in keypoints:
